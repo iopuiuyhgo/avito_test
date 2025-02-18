@@ -9,7 +9,6 @@ import (
 	_ "github.com/golang-migrate/migrate/v4/source/file"  // Источник миграций из файлов
 	"github.com/jackc/pgx/v5"
 	_ "github.com/jackc/pgx/v5/stdlib" // Адаптер pgx для database/sql
-	"log"
 )
 
 type UserStoragePostgres struct {
@@ -74,6 +73,5 @@ func (st *UserStoragePostgres) UpdateCoins(userID int, newCoins int) error {
 	if rowsAffected == 0 {
 		return errors.New("user not found")
 	}
-	log.Println(rowsAffected)
 	return nil
 }

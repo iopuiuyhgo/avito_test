@@ -54,7 +54,6 @@ func (auth *AuthStoragePostgres) CheckContains(username string) bool {
 	return ans.Next()
 }
 
-// Exported method to satisfy the interface
 func (auth *AuthStoragePostgres) GetUserHash(username string) (string, error) {
 	query := `
         SELECT password_hash FROM auth WHERE username = $1

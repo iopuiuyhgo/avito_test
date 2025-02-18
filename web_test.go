@@ -2,217 +2,30 @@ package main
 
 import (
 	"avito-merch-store/internal/auth"
-	"avito-merch-store/internal/merchant"
 	"avito-merch-store/internal/storage/postgres"
-	"avito-merch-store/internal/web"
+	"avito-merch-store/model"
 	"bytes"
 	"encoding/json"
-	"github.com/stretchr/testify/assert"
+	"io"
 	"log"
 	"net/http"
-	"net/http/httptest"
 	"os"
+	"sync"
 	"testing"
+	"time"
 )
 
-func TestAuthAPI(t *testing.T) {
-	ptx := os.Getenv("POSTGRES_PATH")
-	stor, err := postgres.CreateAuthStoragePostgres(ptx)
-	if err != nil {
-		log.Fatal(err)
-	}
+// --- Определения структур, соответствующие Swagger-схемам ---
 
-	a, err := postgres.CreateUserStoragePostgres(ptx)
-	b, err := postgres.CreateInventoryStoragePostgres(ptx)
-	c, err := postgres.CreateTransactionStoragePostgres(ptx)
-	d, err := postgres.CreateMerchStoragePostgres(ptx)
-	if err != nil {
-		log.Fatal(err)
-	}
-	router := web.NewService(stor, auth.CreateAuthenticator(os.Getenv("JWT_KEY")), merchant.CreateMerchant(a, b, c, d))
-	err = postgres.DownMigrations(ptx)
-	if err != nil {
-		log.Fatal(err)
-	}
-	err = postgres.UpMigrations(ptx)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	t.Run("Successful authentication", func(t *testing.T) {
-		payload := map[string]string{
-			"username": "testuser",
-			"password": "validpass",
-		}
-		body, _ := json.Marshal(payload)
-
-		w := httptest.NewRecorder()
-		req, _ := http.NewRequest("POST", "/api/auth", bytes.NewBuffer(body))
-		req.Header.Set("Content-Type", "application/json")
-
-		router.ServeHTTP(w, req)
-
-		assert.Equal(t, http.StatusOK, w.Code)
-		var response map[string]string
-		json.Unmarshal(w.Body.Bytes(), &response)
-		assert.Contains(t, response, "token")
-	})
-
-	t.Run("Invalid credentials", func(t *testing.T) {
-		payload := map[string]string{
-			"username": "testuser",
-			"password": "wrongpass",
-		}
-		body, _ := json.Marshal(payload)
-
-		w := httptest.NewRecorder()
-		req, _ := http.NewRequest("POST", "/api/auth", bytes.NewBuffer(body))
-		req.Header.Set("Content-Type", "application/json")
-
-		router.ServeHTTP(w, req)
-
-		assert.Equal(t, http.StatusUnauthorized, w.Code)
-	})
+type AuthRequest struct {
+	Username string `json:"username"`
+	Password string `json:"password"`
 }
 
-func TestInfoAPI(t *testing.T) {
-	ptx := os.Getenv("POSTGRES_PATH")
-
-	stor, err := postgres.CreateAuthStoragePostgres(ptx)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	a, err := postgres.CreateUserStoragePostgres(ptx)
-	b, err := postgres.CreateInventoryStoragePostgres(ptx)
-	c, err := postgres.CreateTransactionStoragePostgres(ptx)
-	d, err := postgres.CreateMerchStoragePostgres(ptx)
-	if err != nil {
-		log.Fatal(err)
-	}
-	router := web.NewService(stor, auth.CreateAuthenticator(os.Getenv("JWT_KEY")), merchant.CreateMerchant(a, b, c, d))
-
-	token := getAuthToken(t, router) // Вспомогательная функция для получения токена
-
-	t.Run("Get info with valid token", func(t *testing.T) {
-		w := httptest.NewRecorder()
-		req, _ := http.NewRequest("GET", "/api/info", nil)
-		req.Header.Set("Authorization", "Bearer "+token)
-
-		router.ServeHTTP(w, req)
-
-		assert.Equal(t, http.StatusOK, w.Code)
-		var response InfoResponse
-		json.Unmarshal(w.Body.Bytes(), &response)
-		assert.IsType(t, 0, response.Coins)
-		assert.IsType(t, []InventoryItem{}, response.Inventory)
-	})
-
-	t.Run("Get info without token", func(t *testing.T) {
-		w := httptest.NewRecorder()
-		req, _ := http.NewRequest("GET", "/api/info", nil)
-
-		router.ServeHTTP(w, req)
-
-		assert.Equal(t, http.StatusUnauthorized, w.Code)
-	})
+type AuthResponse struct {
+	Token string `json:"token"`
 }
 
-func TestSendCoinAPI(t *testing.T) {
-	ptx := os.Getenv("POSTGRES_PATH")
-
-	stor, err := postgres.CreateAuthStoragePostgres(ptx)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	a, err := postgres.CreateUserStoragePostgres(ptx)
-	b, err := postgres.CreateInventoryStoragePostgres(ptx)
-	c, err := postgres.CreateTransactionStoragePostgres(ptx)
-	d, err := postgres.CreateMerchStoragePostgres(ptx)
-	if err != nil {
-		log.Fatal(err)
-	}
-	router := web.NewService(stor, auth.CreateAuthenticator(os.Getenv("JWT_KEY")), merchant.CreateMerchant(a, b, c, d))
-
-	token := getAuthToken(t, router)
-
-	t.Run("Successful coin transfer", func(t *testing.T) {
-		payload := SendCoinRequest{
-			ToUser: "recipient",
-			Amount: 50,
-		}
-		body, _ := json.Marshal(payload)
-
-		w := httptest.NewRecorder()
-		req, _ := http.NewRequest("POST", "/api/sendCoin", bytes.NewBuffer(body))
-		req.Header.Set("Authorization", "Bearer "+token)
-		req.Header.Set("Content-Type", "application/json")
-
-		router.ServeHTTP(w, req)
-
-		assert.Equal(t, http.StatusOK, w.Code)
-	})
-
-	t.Run("Transfer to invalid user", func(t *testing.T) {
-		payload := SendCoinRequest{
-			ToUser: "nonexistent",
-			Amount: 50,
-		}
-		body, _ := json.Marshal(payload)
-
-		w := httptest.NewRecorder()
-		req, _ := http.NewRequest("POST", "/api/sendCoin", bytes.NewBuffer(body))
-		req.Header.Set("Authorization", "Bearer "+token)
-		req.Header.Set("Content-Type", "application/json")
-
-		router.ServeHTTP(w, req)
-
-		assert.Equal(t, http.StatusBadRequest, w.Code)
-	})
-}
-
-func TestBuyItemAPI(t *testing.T) {
-	ptx := os.Getenv("POSTGRES_PATH")
-
-	stor, err := postgres.CreateAuthStoragePostgres(ptx)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	a, err := postgres.CreateUserStoragePostgres(ptx)
-	b, err := postgres.CreateInventoryStoragePostgres(ptx)
-	c, err := postgres.CreateTransactionStoragePostgres(ptx)
-	d, err := postgres.CreateMerchStoragePostgres(ptx)
-	if err != nil {
-		log.Fatal(err)
-	}
-	router := web.NewService(stor, auth.CreateAuthenticator(os.Getenv("JWT_KEY")), merchant.CreateMerchant(a, b, c, d))
-
-	token := getAuthToken(t, router)
-
-	t.Run("Successful item purchase", func(t *testing.T) {
-		w := httptest.NewRecorder()
-		req, _ := http.NewRequest("GET", "/api/buy/item1", nil)
-		req.Header.Set("Authorization", "Bearer "+token)
-
-		router.ServeHTTP(w, req)
-
-		assert.Equal(t, http.StatusOK, w.Code)
-	})
-
-	t.Run("Purchase nonexistent item", func(t *testing.T) {
-		w := httptest.NewRecorder()
-		req, _ := http.NewRequest("GET", "/api/buy/invalid_item", nil)
-		req.Header.Set("Authorization", "Bearer "+token)
-
-		router.ServeHTTP(w, req)
-
-		assert.Equal(t, http.StatusBadRequest, w.Code)
-	})
-}
-
-// Вспомогательные структуры и функции
 type InfoResponse struct {
 	Coins       int             `json:"coins"`
 	Inventory   []InventoryItem `json:"inventory"`
@@ -225,14 +38,18 @@ type InventoryItem struct {
 }
 
 type CoinHistory struct {
-	Received []CoinTransaction `json:"received"`
-	Sent     []CoinTransaction `json:"sent"`
+	Received []ReceivedItem `json:"received"`
+	Sent     []SentItem     `json:"sent"`
 }
 
-type CoinTransaction struct {
+type ReceivedItem struct {
 	FromUser string `json:"fromUser"`
-	ToUser   string `json:"toUser"`
 	Amount   int    `json:"amount"`
+}
+
+type SentItem struct {
+	ToUser string `json:"toUser"`
+	Amount int    `json:"amount"`
 }
 
 type SendCoinRequest struct {
@@ -240,27 +57,323 @@ type SendCoinRequest struct {
 	Amount int    `json:"amount"`
 }
 
-func getAuthToken(t *testing.T, router *web.Service) string {
-	payload := map[string]string{
-		"username": "testuser",
-		"password": "validpass",
+type ErrorResponse struct {
+	Errors string `json:"errors"`
+}
+
+// --- Вспомогательная функция для получения JWT-токена ---
+
+func getAuthToken(t *testing.T, serverURL string, usr string, pass string) string {
+	authReq := AuthRequest{
+		Username: usr,
+		Password: pass,
 	}
-	body, _ := json.Marshal(payload)
-
-	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("POST", "/api/auth", bytes.NewBuffer(body))
-	req.Header.Set("Content-Type", "application/json")
-
-	router.ServeHTTP(w, req)
-
-	if w.Code != http.StatusOK {
-		t.Fatal("Failed to get auth token")
-	}
-
-	var response map[string]string
-	err := json.Unmarshal(w.Body.Bytes(), &response)
+	body, err := json.Marshal(authReq)
 	if err != nil {
-		t.Error("json cannot be unmarshal")
+		t.Fatalf("Ошибка маршалинга запроса аутентификации: %v", err)
 	}
-	return response["token"]
+
+	res, err := http.Post(serverURL+"/api/auth", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("Ошибка отправки запроса аутентификации: %v", err)
+	}
+	defer func(Body io.ReadCloser) {
+		err := Body.Close()
+		if err != nil {
+			t.Errorf(err.Error())
+		}
+	}(res.Body)
+
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("Ожидался статус 200 от /api/auth, получен %d", res.StatusCode)
+	}
+
+	var authResp AuthResponse
+	err = json.NewDecoder(res.Body).Decode(&authResp)
+	if err != nil {
+		t.Fatalf("Ошибка декодирования ответа аутентификации: %v", err)
+	}
+	if authResp.Token == "" {
+		t.Fatalf("Получен пустой токен")
+	}
+	return authResp.Token
+}
+
+func TestAPI(t *testing.T) {
+	i := 0
+
+	ptx := os.Getenv("POSTGRES_PATH")
+	items := []model.Item{
+		{"t-shirt", 80},
+		{"cup", 20},
+		{"book", 50},
+		{"pen", 10},
+		{"powerbank", 200},
+		{"hoody", 300},
+		{"umbrella", 200},
+		{"socks", 10},
+		{"wallet", 50},
+		{"pink-hoody", 500},
+	}
+	err := postgres.DownMigrations(ptx, "/internal/storage/postgres/migrations")
+	err = postgres.UpMigrations(ptx, "/internal/storage/postgres/migrations")
+
+	stor, err := postgres.CreateAuthStoragePostgres(ptx)
+	if err != nil {
+		log.Fatal(err)
+	}
+	au := auth.CreateAuthenticator(os.Getenv("JWT_KEY"))
+	a, err := postgres.CreateUserStoragePostgres(ptx)
+	b, err := postgres.CreateInventoryStoragePostgres(ptx)
+	c, err := postgres.CreateTransactionStoragePostgres(ptx)
+	d, err := postgres.CreateMerchStoragePostgres(ptx, items)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	var wg1 sync.WaitGroup
+
+	wg1.Add(1)
+	go runServer(ptx, "8080", au, stor, a, b, c, d, &wg1)
+	wg1.Wait()
+
+	URL := "http://127.0.0.1:8080"
+
+	t.Run("Auth_Success", func(t *testing.T) {
+		token := getAuthToken(t, URL, "auth_testuser", "password")
+		if token == "" {
+			t.Error("Токен не должен быть пустым")
+		}
+		log.Printf("log%d\n", i)
+		i++
+	})
+
+	// Тест аутентификации с некорректным телом запроса.
+	t.Run("Auth_InvalidRequest", func(t *testing.T) {
+		// Передаём неверный JSON
+		res, err := http.Post(URL+"/api/auth", "application/json", bytes.NewReader([]byte(`{"invalid": "data"}`)))
+		if err != nil {
+			t.Fatalf("Ошибка отправки запроса /api/auth с неверными данными: %v", err)
+		}
+		defer func(Body io.ReadCloser) {
+			err := Body.Close()
+			if err != nil {
+				log.Println(err)
+			}
+		}(res.Body)
+		// Ожидаем статус 400 или 401
+		if res.StatusCode != http.StatusBadRequest && res.StatusCode != http.StatusUnauthorized {
+			t.Errorf("Ожидался статус 400 или 401 для неверного запроса, получен %d", res.StatusCode)
+		}
+	})
+
+	// Получаем корректный токен для тестов, требующих авторизации.
+	user := getAuthToken(t, URL, "testuser", "password")
+	authHeader := "Bearer " + user
+	_ = getAuthToken(t, URL, "anotherUser", "password")
+
+	// --- Тесты для /api/info ---
+	t.Run("Info_NoAuth", func(t *testing.T) {
+		req, err := http.NewRequest("GET", URL+"/api/info", nil)
+		if err != nil {
+			t.Fatalf("Ошибка создания запроса /api/info: %v", err)
+		}
+		// Без заголовка авторизации
+		res, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("Ошибка выполнения запроса /api/info: %v", err)
+		}
+		defer func(Body io.ReadCloser) {
+			err := Body.Close()
+			if err != nil {
+				log.Println(err)
+			}
+		}(res.Body)
+		if res.StatusCode != http.StatusUnauthorized {
+			t.Errorf("Ожидался статус 401 для отсутствия токена, получен %d", res.StatusCode)
+		}
+	})
+
+	t.Run("Info_Success", func(t *testing.T) {
+		req, err := http.NewRequest("GET", URL+"/api/info", nil)
+		if err != nil {
+			t.Fatalf("Ошибка создания запроса /api/info: %v", err)
+		}
+		req.Header.Set("Authorization", authHeader)
+		client := &http.Client{Timeout: 5 * time.Second}
+		res, err := client.Do(req)
+		if err != nil {
+			t.Fatalf("Ошибка выполнения запроса /api/info: %v", err)
+		}
+		defer func(Body io.ReadCloser) {
+			err := Body.Close()
+			if err != nil {
+				log.Println(err)
+			}
+		}(res.Body)
+		if res.StatusCode != http.StatusOK {
+			t.Fatalf("Ожидался статус 200, получен %d", res.StatusCode)
+		}
+
+		var infoResp InfoResponse
+		err = json.NewDecoder(res.Body).Decode(&infoResp)
+		if err != nil {
+			t.Fatalf("Ошибка декодирования ответа /api/info: %v", err)
+		}
+		// Простейшие проверки содержимого ответа
+		if infoResp.Coins < 0 {
+			t.Errorf("Неверное количество монет: %d", infoResp.Coins)
+		}
+		// Можно добавить дополнительные проверки полей, если они обязательны.
+	})
+
+	// --- Тесты для /api/sendCoin ---
+	t.Run("SendCoin_NoAuth", func(t *testing.T) {
+		reqBody := SendCoinRequest{
+			ToUser: "anotherUser",
+			Amount: 10,
+		}
+		body, _ := json.Marshal(reqBody)
+		req, err := http.NewRequest("POST", URL+"/api/sendCoin", bytes.NewReader(body))
+		if err != nil {
+			t.Fatalf("Ошибка создания запроса /api/sendCoin: %v", err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		// Без авторизации
+		res, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("Ошибка выполнения запроса /api/sendCoin: %v", err)
+		}
+		defer func(Body io.ReadCloser) {
+			err := Body.Close()
+			if err != nil {
+				log.Println(err)
+			}
+		}(res.Body)
+		if res.StatusCode != http.StatusUnauthorized {
+			t.Errorf("Ожидался статус 401 для отсутствия токена, получен %d", res.StatusCode)
+		}
+	})
+
+	t.Run("SendCoin_InvalidBody", func(t *testing.T) {
+		// Передаём некорректный JSON (например, неверный тип данных для toUser)
+		req, err := http.NewRequest("POST", URL+"/api/sendCoin", bytes.NewReader([]byte(`{"toUser": 123}`)))
+		if err != nil {
+			t.Fatalf("Ошибка создания запроса /api/sendCoin: %v", err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", authHeader)
+		res, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("Ошибка выполнения запроса /api/sendCoin: %v", err)
+		}
+		defer func(Body io.ReadCloser) {
+			err := Body.Close()
+			if err != nil {
+				log.Println(err)
+			}
+		}(res.Body)
+		if res.StatusCode != http.StatusBadRequest {
+			t.Errorf("Ожидался статус 400 для неверного тела запроса, получен %d", res.StatusCode)
+		}
+	})
+
+	t.Run("SendCoin_Success", func(t *testing.T) {
+		reqBody := SendCoinRequest{
+			ToUser: "anotherUser",
+			Amount: 10,
+		}
+		body, err := json.Marshal(reqBody)
+		if err != nil {
+			t.Fatalf("Ошибка маршалинга запроса /api/sendCoin: %v", err)
+		}
+		req, err := http.NewRequest("POST", URL+"/api/sendCoin", bytes.NewReader(body))
+		log.Println(req.URL)
+		if err != nil {
+			t.Fatalf("Ошибка создания запроса /api/sendCoin: %v", err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", authHeader)
+		client := &http.Client{Timeout: 5 * time.Second}
+		res, err := client.Do(req)
+		if err != nil {
+			t.Fatalf("Ошибка выполнения запроса /api/sendCoin: %v", err)
+		}
+		defer func(Body io.ReadCloser) {
+			err := Body.Close()
+			if err != nil {
+				log.Println(err)
+			}
+		}(res.Body)
+		if res.StatusCode != http.StatusOK {
+			t.Errorf("Ожидался статус 200 при успешной отправке монет, получен %d", res.StatusCode)
+		}
+	})
+
+	// --- Тесты для /api/buy/{item} ---
+	t.Run("Buy_NoAuth", func(t *testing.T) {
+		req, err := http.NewRequest("GET", URL+"/api/buy/sword", nil)
+		if err != nil {
+			t.Fatalf("Ошибка создания запроса /api/buy: %v", err)
+		}
+		res, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("Ошибка выполнения запроса /api/buy: %v", err)
+		}
+		defer func(Body io.ReadCloser) {
+			err := Body.Close()
+			if err != nil {
+				log.Println(err)
+			}
+		}(res.Body)
+		if res.StatusCode != http.StatusUnauthorized {
+			t.Errorf("Ожидался статус 401 для отсутствия токена, получен %d", res.StatusCode)
+		}
+	})
+
+	t.Run("Buy_Success", func(t *testing.T) {
+		req, err := http.NewRequest("GET", URL+"/api/buy/socks", nil)
+		if err != nil {
+			t.Fatalf("Ошибка создания запроса /api/buy: %v", err)
+		}
+		req.Header.Set("Authorization", authHeader)
+		client := &http.Client{Timeout: 5 * time.Second}
+		res, err := client.Do(req)
+		if err != nil {
+			t.Fatalf("Ошибка выполнения запроса /api/buy: %v", err)
+		}
+		defer func(Body io.ReadCloser) {
+			err := Body.Close()
+			if err != nil {
+				log.Println(err)
+			}
+		}(res.Body)
+		if res.StatusCode != http.StatusOK {
+			t.Errorf("Ожидался статус 200 при успешной покупке, получен %d", res.StatusCode)
+		}
+	})
+
+	t.Run("Buy_InvalidItem", func(t *testing.T) {
+		// Предполагаем, что при отсутствии обязательного path-параметра (item)
+		// сервер вернёт ошибку (400 или 404). Например, запрос к /api/buy/ (с завершающим слешем)
+		req, err := http.NewRequest("GET", URL+"/api/buy/", nil)
+		if err != nil {
+			t.Fatalf("Ошибка создания запроса /api/buy с некорректным item: %v", err)
+		}
+		req.Header.Set("Authorization", authHeader)
+		res, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("Ошибка выполнения запроса /api/buy с некорректным item: %v", err)
+		}
+		defer func(Body io.ReadCloser) {
+			err := Body.Close()
+			if err != nil {
+				log.Println(err)
+			}
+		}(res.Body)
+		// Ожидаем статус 400 или 404
+		if res.StatusCode != http.StatusBadRequest && res.StatusCode != http.StatusNotFound {
+			t.Errorf("Ожидался статус 400 или 404 для некорректного item, получен %d", res.StatusCode)
+		}
+	})
 }

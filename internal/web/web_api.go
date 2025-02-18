@@ -23,8 +23,8 @@ type Service struct {
 }
 
 type SendCoinRequest struct {
-	ToUser string `json:"toUser"` // Логин получателя
-	Amount int    `json:"amount"` // Количество монет
+	ToUser string `json:"toUser"`
+	Amount int    `json:"amount"`
 }
 
 func NewService(storage storage.AuthStorage, auth auth.Authenticator, merchant merchant.Merchant) *Service {
@@ -61,13 +61,14 @@ func (s *Service) AuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
 
 		tokenString := strings.TrimPrefix(authHeader, "Bearer ")
 		if tokenString == authHeader {
-			http.Error(w, "Invalid token format", http.StatusUnauthorized)
+			http.Error(w, "Invalid token format", http.StatusBadRequest)
 			return
 		}
 
 		key, err := s.auth.ValidateKey(tokenString)
 		if err != nil {
-			respondWithError(w, http.StatusUnauthorized, err.Error())
+			respondWithError(w, http.StatusBadRequest, err.Error())
+			return
 		}
 		ctx := context.WithValue(r.Context(), "name", key)
 		next(w, r.WithContext(ctx))
@@ -77,12 +78,8 @@ func (s *Service) AuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
 func (s *Service) GetInfoHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	info, err := s.merch.GetInfoByUsername(ctx.Value("name").(string))
-	if errors.Is(err, storage.ErrUserNotFound) {
-		respondWithError(w, http.StatusBadRequest, err.Error())
-		return
-	}
 	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, err.Error())
+		respondWithError(w, http.StatusInternalServerError, sww(err.Error()))
 		return
 	}
 	respondWithJSON(w, http.StatusOK, info)
@@ -104,29 +101,44 @@ func (s *Service) GetTransactionsHandler(w http.ResponseWriter, r *http.Request)
 func (s *Service) SendCoinHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, sww("error: cannot read request body"))
+		return
+	}
+
 	defer func(Body io.ReadCloser) {
 		err := Body.Close()
 		if err != nil {
-			respondWithError(w, http.StatusInternalServerError, err.Error())
+			respondWithError(w, http.StatusInternalServerError,
+				"coins have sent but something went wrong: \n"+sww(err.Error()))
 		}
 	}(r.Body)
-
-	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "error: cannot read request body")
-		return
-	}
 
 	var requestData SendCoinRequest
 	if err := json.Unmarshal(body, &requestData); err != nil {
 		respondWithError(w, http.StatusBadRequest, "error: invalid JSON format")
 		return
 	}
+
+	if ctx.Value("name").(string) == requestData.ToUser {
+		respondWithError(w, http.StatusBadRequest, "you can't send money for yourself")
+		return
+	}
 	err = s.merch.SendCoin(ctx.Value("name").(string), requestData.ToUser, requestData.Amount)
 	if errors.Is(err, storage.ErrUserNotFound) {
-		respondWithError(w, http.StatusNotFound, err.Error())
+		respondWithError(w, http.StatusBadRequest, "user not found")
+		return
+	}
+	if errors.Is(err, merchant.ErrNotEnoughCoins) {
+		respondWithError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if errors.Is(err, merchant.ErrIncorrectCount) {
+		respondWithError(w, http.StatusBadRequest, err.Error())
+		return
 	}
 	if err != nil {
-		respondWithJSON(w, http.StatusInternalServerError, err.Error())
+		respondWithJSON(w, http.StatusInternalServerError, sww(err.Error()))
 		return
 	}
 	respondWithJSON(w, http.StatusOK, nil)
@@ -139,9 +151,16 @@ func (s *Service) BuyItemHandler(w http.ResponseWriter, r *http.Request) {
 	err := s.merch.Buy(ctx.Value("name").(string), item)
 	if errors.Is(err, merchant.ErrNotEnoughCoins) {
 		respondWithError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if errors.Is(err, storage.ErrMerchNotFound) {
+		respondWithError(w, http.StatusBadRequest, err.Error())
+		return
+
 	}
 	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, err.Error())
+		respondWithError(w, http.StatusInternalServerError, sww(err.Error()))
+		return
 	}
 
 	respondWithJSON(w, http.StatusOK, nil)
@@ -149,24 +168,30 @@ func (s *Service) BuyItemHandler(w http.ResponseWriter, r *http.Request) {
 
 func (s *Service) AuthHandler(w http.ResponseWriter, r *http.Request) {
 	var req model.AuthRequestWeb
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		respondWithError(w, http.StatusBadRequest, "Invalid request")
+	err := json.NewDecoder(r.Body).Decode(&req)
+	if err != nil || req.Username == "" || req.Password == "" {
+		respondWithError(w, http.StatusBadRequest, "username or password is empty or fields is not correct")
 		return
 	}
 	if !s.storage.CheckContains(req.Username) {
 		hash, err := s.auth.HashPassword(req.Password)
 		if err != nil {
-			respondWithError(w, http.StatusInternalServerError, err.Error())
+			respondWithError(w, http.StatusInternalServerError, sww(err.Error()))
 		}
 		err = s.storage.AddUser(req.Username, hash)
 		if err != nil {
-			respondWithError(w, http.StatusInternalServerError, err.Error())
+			respondWithError(w, http.StatusInternalServerError, sww(err.Error()))
+			return
+		}
+		err = s.merch.AddUser(req.Username)
+		if err != nil {
+			respondWithError(w, http.StatusInternalServerError, sww(err.Error()))
 			return
 		}
 	} else {
-		hash, err := s.storage.GetUserHash(req.Password)
+		hash, err := s.storage.GetUserHash(req.Username)
 		if err != nil {
-			respondWithError(w, http.StatusUnauthorized, err.Error())
+			respondWithError(w, http.StatusUnauthorized, "user does not exist")
 			return
 		}
 		if !s.auth.CheckPassword(hash, req.Password) {
@@ -177,13 +202,7 @@ func (s *Service) AuthHandler(w http.ResponseWriter, r *http.Request) {
 
 	key, err := s.auth.GenerateKey(req.Username)
 	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-
-	err = s.merch.AddUser(req.Username)
-	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, err.Error())
+		respondWithError(w, http.StatusInternalServerError, sww(err.Error()))
 		return
 	}
 
@@ -205,4 +224,8 @@ func respondWithJSON(w http.ResponseWriter, code int, payload interface{}) {
 
 func respondWithError(w http.ResponseWriter, code int, message string) {
 	respondWithJSON(w, code, model.ErrorResponseWeb{Errors: message})
+}
+
+func sww(e string) string {
+	return "something went wrong:\n" + e
 }

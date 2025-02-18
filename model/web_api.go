@@ -10,7 +10,7 @@ type AuthResponseWeb struct {
 }
 
 type ErrorResponseWeb struct {
-	Errors string
+	Errors string `json:"errors"`
 }
 
 type InfoResponseWeb struct {

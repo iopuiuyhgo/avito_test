@@ -1,5 +1,4 @@
 services:
-  # Backend-сервис
   app:
     image: avito_test:latest
     build:
@@ -8,8 +7,7 @@ services:
     ports:
       - "8080:8080"
     environment:
-      - POSTGRES_PATH=
-      - JWT_KEY=
+      - POSTGRES_PATH=postgres://user:password@db:5432/merch_store?sslmode=disable
     depends_on:
       - db
     networks:

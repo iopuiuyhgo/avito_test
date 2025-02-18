@@ -46,7 +46,7 @@ func (st *InventoryStoragePostgres) GetByUserID(userID int, count int) ([]model.
 		return nil, err
 	}
 	var res []model.InventoryItem
-	for i := 0; response.Next() && i < count; i++ {
+	for i := 0; response.Next() && (i < count || count == -1); i++ {
 		var item model.InventoryItem
 		err := response.Scan(&item.UserID, &item.ItemName, &item.Quantity)
 		if err != nil {

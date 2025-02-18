@@ -19,30 +19,30 @@ func CreateTransactionStoragePostgres(postgresConnect string) (*TransactionStora
 	return &TransactionStoragePostgres{conn}, nil
 }
 
-func (st *TransactionStoragePostgres) CreateTransaction(senderID int, receiverID, amount int) error {
+func (st *TransactionStoragePostgres) CreateTransaction(senderName string, receiverName string, amount int) error {
 	ctx := context.Background()
 
 	var err error
 	query := `
-        INSERT INTO transactions (sender_id, receiver_id, amount, created_at)
+        INSERT INTO transactions (sender_username, receiver_username, amount, created_at)
         VALUES ($1, $2, $3, $4)
     `
-	_, err = st.conn.Exec(ctx, query, senderID, receiverID, amount, time.Now())
+	_, err = st.conn.Exec(ctx, query, senderName, receiverName, amount, time.Now())
 	if err != nil {
 		return err
 	}
 	return nil
 }
 
-func (st *TransactionStoragePostgres) GetTransactionHistory(userID int, count int) ([]model.Transaction, error) {
+func (st *TransactionStoragePostgres) GetTransactionHistory(username string, count int) ([]model.Transaction, error) {
 	ctx := context.Background()
 	query := `
-        SELECT id, sender_id, receiver_id, amount, created_at
+        SELECT id, sender_username, receiver_username, amount, created_at
         FROM transactions
-        WHERE sender_id = $1 OR receiver_id = $1
+        WHERE sender_username = $1 OR receiver_username = $1
         ORDER BY created_at DESC
     `
-	rows, err := st.conn.Query(ctx, query, userID)
+	rows, err := st.conn.Query(ctx, query, username)
 	if err != nil {
 		return nil, err
 	}
@@ -51,7 +51,7 @@ func (st *TransactionStoragePostgres) GetTransactionHistory(userID int, count in
 	var transactions []model.Transaction
 	for i := 0; rows.Next() && (i < count || count == -1); i++ {
 		var t model.Transaction
-		err := rows.Scan(&t.ID, &t.SenderID, &t.ReceiverID, &t.Amount, &t.CreatedAt)
+		err := rows.Scan(&t.ID, &t.SenderName, &t.ReceiverName, &t.Amount, &t.CreatedAt)
 		if err != nil {
 			return nil, err
 		}

@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"avito-merch-store/internal/storage"
+	"avito-merch-store/model"
 	"context"
 	"github.com/jackc/pgx/v5"
 )
@@ -10,11 +11,29 @@ type MerchStoragePostgres struct {
 	conn *pgx.Conn
 }
 
-func CreateMerchStoragePostgres(postgresConnect string) (*MerchStoragePostgres, error) {
+func CreateMerchStoragePostgres(postgresConnect string, items []model.Item) (*MerchStoragePostgres, error) {
 	conn, err := pgx.Connect(context.Background(), postgresConnect)
 	if err != nil {
 		return nil, err
 	}
+	query := `
+        INSERT INTO merch (name, price)
+        VALUES ($1, $2)
+        ON CONFLICT (name) DO NOTHING
+    `
+
+	for _, item := range items {
+		_, err := conn.Exec(context.Background(), query, item.Name, item.Price)
+
+		if err != nil {
+			err1 := conn.Close(context.Background())
+			if err1 != nil {
+				return nil, err1
+			}
+			return nil, err
+		}
+	}
+
 	return &MerchStoragePostgres{conn}, nil
 }
 

@@ -6,11 +6,11 @@ import (
 	"strings"
 )
 
-func getMigrate(postgresConnect string) (*migrate.Migrate, error) {
+func getMigrate(postgresConnect string, path string) (*migrate.Migrate, error) {
 	postgresConnect = strings.Replace(postgresConnect, "postgres://", "pgx://", 1)
 
 	m, err := migrate.New(
-		"file://internal/storage/postgres/migrations",
+		"file:/"+path,
 		postgresConnect,
 	)
 	if err != nil {
@@ -19,8 +19,8 @@ func getMigrate(postgresConnect string) (*migrate.Migrate, error) {
 	return m, nil
 }
 
-func UpMigrations(postgresConnect string) error {
-	m, err := getMigrate(postgresConnect)
+func UpMigrations(postgresConnect string, path string) error {
+	m, err := getMigrate(postgresConnect, path)
 	if err != nil {
 		return err
 	}
@@ -40,8 +40,8 @@ func UpMigrations(postgresConnect string) error {
 	return nil
 }
 
-func DownMigrations(postgresConnect string) error {
-	m, err := getMigrate(postgresConnect)
+func DownMigrations(postgresConnect string, path string) error {
+	m, err := getMigrate(postgresConnect, path)
 	if err != nil {
 		return err
 	}
