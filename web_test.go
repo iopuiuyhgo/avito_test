@@ -15,8 +15,6 @@ import (
 	"time"
 )
 
-// --- Определения структур, соответствующие Swagger-схемам ---
-
 type AuthRequest struct {
 	Username string `json:"username"`
 	Password string `json:"password"`
@@ -60,8 +58,6 @@ type SendCoinRequest struct {
 type ErrorResponse struct {
 	Errors string `json:"errors"`
 }
-
-// --- Вспомогательная функция для получения JWT-токена ---
 
 func getAuthToken(t *testing.T, serverURL string, usr string, pass string) string {
 	authReq := AuthRequest{
@@ -148,9 +144,7 @@ func TestAPI(t *testing.T) {
 		i++
 	})
 
-	// Тест аутентификации с некорректным телом запроса.
 	t.Run("Auth_InvalidRequest", func(t *testing.T) {
-		// Передаём неверный JSON
 		res, err := http.Post(URL+"/api/auth", "application/json", bytes.NewReader([]byte(`{"invalid": "data"}`)))
 		if err != nil {
 			t.Fatalf("Ошибка отправки запроса /api/auth с неверными данными: %v", err)
@@ -161,24 +155,20 @@ func TestAPI(t *testing.T) {
 				log.Println(err)
 			}
 		}(res.Body)
-		// Ожидаем статус 400 или 401
 		if res.StatusCode != http.StatusBadRequest && res.StatusCode != http.StatusUnauthorized {
 			t.Errorf("Ожидался статус 400 или 401 для неверного запроса, получен %d", res.StatusCode)
 		}
 	})
 
-	// Получаем корректный токен для тестов, требующих авторизации.
 	user := getAuthToken(t, URL, "testuser", "password")
 	authHeader := "Bearer " + user
 	_ = getAuthToken(t, URL, "anotherUser", "password")
 
-	// --- Тесты для /api/info ---
 	t.Run("Info_NoAuth", func(t *testing.T) {
 		req, err := http.NewRequest("GET", URL+"/api/info", nil)
 		if err != nil {
 			t.Fatalf("Ошибка создания запроса /api/info: %v", err)
 		}
-		// Без заголовка авторизации
 		res, err := http.DefaultClient.Do(req)
 		if err != nil {
 			t.Fatalf("Ошибка выполнения запроса /api/info: %v", err)
@@ -220,14 +210,11 @@ func TestAPI(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Ошибка декодирования ответа /api/info: %v", err)
 		}
-		// Простейшие проверки содержимого ответа
 		if infoResp.Coins < 0 {
 			t.Errorf("Неверное количество монет: %d", infoResp.Coins)
 		}
-		// Можно добавить дополнительные проверки полей, если они обязательны.
 	})
 
-	// --- Тесты для /api/sendCoin ---
 	t.Run("SendCoin_NoAuth", func(t *testing.T) {
 		reqBody := SendCoinRequest{
 			ToUser: "anotherUser",
@@ -239,7 +226,6 @@ func TestAPI(t *testing.T) {
 			t.Fatalf("Ошибка создания запроса /api/sendCoin: %v", err)
 		}
 		req.Header.Set("Content-Type", "application/json")
-		// Без авторизации
 		res, err := http.DefaultClient.Do(req)
 		if err != nil {
 			t.Fatalf("Ошибка выполнения запроса /api/sendCoin: %v", err)
@@ -256,7 +242,6 @@ func TestAPI(t *testing.T) {
 	})
 
 	t.Run("SendCoin_InvalidBody", func(t *testing.T) {
-		// Передаём некорректный JSON (например, неверный тип данных для toUser)
 		req, err := http.NewRequest("POST", URL+"/api/sendCoin", bytes.NewReader([]byte(`{"toUser": 123}`)))
 		if err != nil {
 			t.Fatalf("Ошибка создания запроса /api/sendCoin: %v", err)
@@ -310,7 +295,6 @@ func TestAPI(t *testing.T) {
 		}
 	})
 
-	// --- Тесты для /api/buy/{item} ---
 	t.Run("Buy_NoAuth", func(t *testing.T) {
 		req, err := http.NewRequest("GET", URL+"/api/buy/sword", nil)
 		if err != nil {
@@ -354,9 +338,7 @@ func TestAPI(t *testing.T) {
 	})
 
 	t.Run("Buy_InvalidItem", func(t *testing.T) {
-		// Предполагаем, что при отсутствии обязательного path-параметра (item)
-		// сервер вернёт ошибку (400 или 404). Например, запрос к /api/buy/ (с завершающим слешем)
-		req, err := http.NewRequest("GET", URL+"/api/buy/", nil)
+		req, err := http.NewRequest("GET", URL+"/api/buy/incorrect", nil)
 		if err != nil {
 			t.Fatalf("Ошибка создания запроса /api/buy с некорректным item: %v", err)
 		}
@@ -371,9 +353,8 @@ func TestAPI(t *testing.T) {
 				log.Println(err)
 			}
 		}(res.Body)
-		// Ожидаем статус 400 или 404
-		if res.StatusCode != http.StatusBadRequest && res.StatusCode != http.StatusNotFound {
-			t.Errorf("Ожидался статус 400 или 404 для некорректного item, получен %d", res.StatusCode)
+		if res.StatusCode != http.StatusBadRequest {
+			t.Errorf("Ожидался статус 400 для некорректного item, получен %d", res.StatusCode)
 		}
 	})
 }
