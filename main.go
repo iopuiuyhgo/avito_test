@@ -50,8 +50,8 @@ func main() {
 		{"pink-hoody", 500},
 	}
 
-	err := postgres.DownMigrations(ptx, "/internal/storage/postgres/migrations")
-	err = postgres.UpMigrations(ptx, "/internal/storage/postgres/migrations")
+	err := postgres.DownMigrations(ptx, "/migrations")
+	err = postgres.UpMigrations(ptx, "/migrations")
 
 	stor, err := postgres.CreateAuthStoragePostgres(ptx)
 	if err != nil {
