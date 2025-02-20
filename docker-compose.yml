@@ -1,3 +1,5 @@
+version: '3.8'
+
 services:
   app:
     image: avito_test:latest
@@ -9,7 +11,8 @@ services:
     environment:
       - POSTGRES_PATH=postgres://user:password@db:5432/merch_store?sslmode=disable
     depends_on:
-      - db
+      db:
+        condition: service_healthy
     networks:
       - app-network
 
@@ -23,6 +26,11 @@ services:
       - db-data:/var/lib/postgresql/data
     networks:
       - app-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U user"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
 volumes:
   db-data:
